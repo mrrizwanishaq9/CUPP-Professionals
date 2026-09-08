@@ -1,0 +1,1553 @@
+# ================================================================
+# 🛡️ CUPP PROFESSIONAL V11.3 — 2026
+# AUTHORIZED LAB WORDLIST GENERATOR
+# GOOGLE COLAB • SINGLE CELL • PROFESSIONAL UI
+# ================================================================
+
+!pip -q install ipywidgets
+
+import os
+import re
+import csv
+import json
+import time
+import itertools
+from datetime import datetime
+from collections import Counter
+
+import ipywidgets as widgets
+from IPython.display import display, HTML, clear_output
+
+# ================================================================
+# 1. GLOBAL STATE
+# ================================================================
+
+APP_NAME = "CUPP PROFESSIONAL"
+VERSION = "V11.3 • 2026"
+
+STATE = {
+    "words": [],
+    "filtered": [],
+    "logs": [],
+    "generated_at": None,
+    "generation_time": 0,
+    "profile": {},
+}
+
+TXT_FILE = "/content/cupp_v11_3_wordlist.txt"
+CSV_FILE = "/content/cupp_v11_3_wordlist.csv"
+JSON_FILE = "/content/cupp_v11_3_session.json"
+
+# ================================================================
+# 2. HELPERS
+# ================================================================
+
+def log(message, level="INFO"):
+    stamp = datetime.now().strftime("%H:%M:%S")
+    STATE["logs"].append(f"[{stamp}] [{level}] {message}")
+    if len(STATE["logs"]) > 300:
+        STATE["logs"] = STATE["logs"][-300:]
+    refresh_logs()
+
+def safe_int(value, default):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def normalize_list(text):
+    if not text:
+        return []
+
+    parts = re.split(r"[\n,;]+", text)
+
+    result = []
+    for item in parts:
+        item = item.strip()
+        if item:
+            result.append(item)
+
+    return result
+
+
+def valid_length(word, min_len, max_len):
+    return min_len <= len(word) <= max_len
+
+
+def add_word(container, word, min_len, max_len, limit):
+    if len(container) >= limit:
+        return
+
+    word = str(word).strip()
+
+    if not word:
+        return
+
+    if not valid_length(word, min_len, max_len):
+        return
+
+    container.add(word)
+
+
+# ================================================================
+# 3. CSS
+# ================================================================
+
+display(HTML("""
+<style>
+
+:root {
+    --bg: #071018;
+    --panel: #0b1620;
+    --panel2: #0e1c28;
+    --border: #1d3545;
+    --cyan: #00e5ff;
+    --green: #00ff9d;
+    --text: #e7f7ff;
+    --muted: #8da6b5;
+    --danger: #ff5577;
+    --yellow: #ffd166;
+}
+
+body {
+    background: #071018 !important;
+}
+
+.cupp-shell {
+    font-family: Inter, Arial, sans-serif;
+    color: var(--text);
+    background:
+        radial-gradient(circle at 10% 0%, #092738 0%, transparent 35%),
+        radial-gradient(circle at 100% 20%, #06352e 0%, transparent 30%),
+        #071018;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    overflow: hidden;
+    margin: 8px 0 20px;
+}
+
+.cupp-header {
+    padding: 22px 26px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(90deg, #0a1824, #0b2028);
+}
+
+.cupp-brand {
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: 1px;
+}
+
+.cupp-brand span {
+    color: var(--cyan);
+}
+
+.cupp-version {
+    color: var(--green);
+    font-size: 12px;
+    margin-top: 5px;
+    letter-spacing: 1px;
+}
+
+.cupp-warning {
+    margin-top: 14px;
+    padding: 10px 14px;
+    border: 1px solid #4e6544;
+    border-radius: 9px;
+    color: #d7f8dd;
+    background: #0d2119;
+    font-size: 12px;
+}
+
+.cupp-section-title {
+    font-size: 15px;
+    font-weight: 800;
+    color: var(--cyan);
+    margin: 8px 0 12px;
+}
+
+.cupp-small {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.cupp-kpi {
+    background: linear-gradient(145deg, #0b1924, #0d202b);
+    border: 1px solid var(--border);
+    border-radius: 13px;
+    padding: 14px;
+    min-width: 130px;
+}
+
+.cupp-kpi-number {
+    font-size: 22px;
+    font-weight: 800;
+    color: var(--green);
+}
+
+.cupp-kpi-label {
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.cupp-console {
+    background: #040a0f;
+    border: 1px solid #16313f;
+    border-radius: 10px;
+    padding: 12px;
+    color: #b9ffe6;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+}
+
+</style>
+"""))
+
+# ================================================================
+# 4. HEADER
+# ================================================================
+
+header = HTML(f"""
+<div class="cupp-shell">
+    <div class="cupp-header">
+        <div class="cupp-brand">
+            🛡️ <span>{APP_NAME}</span>
+        </div>
+        <div class="cupp-version">
+            {VERSION} • LOCAL GENERATION ENGINE
+        </div>
+
+        <div class="cupp-warning">
+            🛡️ <b>AUTHORIZED LAB MODE</b><br>
+            Generate and analyze wordlists only for systems, accounts,
+            or datasets you own or are explicitly authorized to test.
+        </div>
+    </div>
+</div>
+""")
+
+display(header)
+
+# ================================================================
+# 5. PROFILE WIDGETS
+# ================================================================
+
+first_name = widgets.Text(
+    description="First Name",
+    placeholder="e.g. Rizwan",
+    layout=widgets.Layout(width="48%")
+)
+
+last_name = widgets.Text(
+    description="Last Name",
+    placeholder="e.g. Demo",
+    layout=widgets.Layout(width="48%")
+)
+
+nickname = widgets.Text(
+    description="Nickname",
+    placeholder="e.g. Riz",
+    layout=widgets.Layout(width="48%")
+)
+
+birthday = widgets.Text(
+    description="Birthday",
+    placeholder="YYYY-MM-DD",
+    layout=widgets.Layout(width="48%")
+)
+
+partner = widgets.Text(
+    description="Partner",
+    placeholder="Optional",
+    layout=widgets.Layout(width="48%")
+)
+
+pet = widgets.Text(
+    description="Pet",
+    placeholder="Optional",
+    layout=widgets.Layout(width="48%")
+)
+
+company = widgets.Text(
+    description="Company",
+    placeholder="Optional",
+    layout=widgets.Layout(width="48%")
+)
+
+city = widgets.Text(
+    description="City",
+    placeholder="Optional",
+    layout=widgets.Layout(width="48%")
+)
+
+keyword = widgets.Text(
+    description="Keyword",
+    placeholder="e.g. robotics",
+    layout=widgets.Layout(width="48%")
+)
+
+custom_words = widgets.Textarea(
+    description="Custom",
+    placeholder="word1, word2, word3",
+    layout=widgets.Layout(width="100%", height="90px")
+)
+
+# ================================================================
+# 6. GENERATOR OPTIONS
+# ================================================================
+
+lowercase = widgets.Checkbox(value=True, description="Lowercase")
+uppercase = widgets.Checkbox(value=True, description="UPPERCASE")
+capitalized = widgets.Checkbox(value=True, description="Capitalized")
+reverse_words = widgets.Checkbox(value=True, description="Reverse")
+leet = widgets.Checkbox(value=True, description="Leetspeak")
+numbers = widgets.Checkbox(value=True, description="Numbers")
+symbols = widgets.Checkbox(value=True, description="Symbols")
+dates = widgets.Checkbox(value=True, description="Dates / Years")
+combinations = widgets.Checkbox(value=True, description="Combinations")
+deduplicate = widgets.Checkbox(value=True, description="Deduplicate")
+
+min_length = widgets.IntText(
+    value=4,
+    description="Min Length",
+    min=1,
+    max=100
+)
+
+max_length = widgets.IntText(
+    value=32,
+    description="Max Length",
+    min=1,
+    max=100
+)
+
+max_words = widgets.IntText(
+    value=5000,
+    description="Max Words",
+    min=10,
+    max=100000
+)
+
+year_from = widgets.IntText(
+    value=1990,
+    description="Year From"
+)
+
+year_to = widgets.IntText(
+    value=2026,
+    description="Year To"
+)
+
+number_patterns = widgets.Text(
+    value="123,1234,01,02,2026",
+    description="Numbers",
+    layout=widgets.Layout(width="100%")
+)
+
+symbol_patterns = widgets.Text(
+    value="!,@,#,$,_,.",
+    description="Symbols",
+    layout=widgets.Layout(width="100%")
+)
+
+separator_patterns = widgets.Text(
+    value=",-,_,.",
+    description="Separators",
+    layout=widgets.Layout(width="100%")
+)
+
+leet_map = widgets.Text(
+    value="a=@,e=3,i=1,o=0,s=$,t=7",
+    description="Leet Map",
+    layout=widgets.Layout(width="100%")
+)
+
+preset = widgets.Dropdown(
+    options=[
+        "Custom",
+        "Balanced Lab",
+        "Compact Lab",
+        "Extended Lab"
+    ],
+    value="Custom",
+    description="Preset"
+)
+
+# ================================================================
+# 7. OUTPUT WIDGETS
+# ================================================================
+
+status_html = widgets.HTML(
+    value="""
+    <div class="cupp-console">
+    ● SYSTEM READY — Waiting for generation...
+    </div>
+    """
+)
+
+kpi_html = widgets.HTML()
+
+word_output = widgets.Output(
+    layout=widgets.Layout(
+        border="1px solid #1d3545",
+        padding="10px",
+        height="330px",
+        overflow="auto"
+    )
+)
+
+analytics_output = widgets.Output(
+    layout=widgets.Layout(
+        border="1px solid #1d3545",
+        padding="10px",
+        min_height="180px"
+    )
+)
+
+logs_output = widgets.Output(
+    layout=widgets.Layout(
+        border="1px solid #1d3545",
+        padding="10px",
+        height="230px",
+        overflow="auto"
+    )
+)
+
+# ================================================================
+# 8. PROFILE ENGINE
+# ================================================================
+
+def get_profile():
+    fields = [
+        first_name.value,
+        last_name.value,
+        nickname.value,
+        partner.value,
+        pet.value,
+        company.value,
+        city.value,
+        keyword.value,
+    ]
+
+    values = []
+
+    for item in fields:
+        item = item.strip()
+        if item:
+            values.append(item)
+
+    values.extend(normalize_list(custom_words.value))
+
+    return list(dict.fromkeys(values))
+
+
+def date_tokens():
+    result = []
+
+    raw = birthday.value.strip()
+
+    if raw:
+        result.append(raw)
+
+        digits = re.sub(r"\D", "", raw)
+
+        if len(digits) >= 4:
+            result.append(digits[-4:])
+
+        if len(digits) >= 6:
+            result.append(digits[:6])
+
+        if len(digits) >= 8:
+            result.append(digits[-8:])
+
+    start = safe_int(year_from.value, 1990)
+    end = safe_int(year_to.value, 2026)
+
+    if start > end:
+        start, end = end, start
+
+    end = min(end, start + 150)
+
+    for year in range(start, end + 1):
+        result.append(str(year))
+
+    return list(dict.fromkeys(result))
+
+
+def parse_leet_map():
+    mapping = {}
+
+    for part in leet_map.value.split(","):
+        if "=" not in part:
+            continue
+
+        left, right = part.split("=", 1)
+
+        left = left.strip()
+        right = right.strip()
+
+        if left:
+            mapping[left] = right
+
+    return mapping
+
+
+def make_leet(word):
+    mapping = parse_leet_map()
+
+    result = word
+
+    for source, target in mapping.items():
+        result = result.replace(source, target)
+        result = result.replace(source.upper(), target)
+
+    return result
+
+
+# ================================================================
+# 9. MAIN GENERATION ENGINE
+# ================================================================
+
+def generate_wordlist():
+    start_time = time.time()
+
+    profile = get_profile()
+
+    if not profile:
+        raise ValueError(
+            "Please enter at least one profile/custom word."
+        )
+
+    min_len = max(1, safe_int(min_length.value, 4))
+    max_len = max(min_len, safe_int(max_length.value, 32))
+    limit = max(10, safe_int(max_words.value, 5000))
+
+    generated = set()
+
+    def add(value):
+        add_word(
+            generated,
+            value,
+            min_len,
+            max_len,
+            limit
+        )
+
+    # ------------------------------------------------------------
+    # Base variants
+    # ------------------------------------------------------------
+
+    for word in profile:
+
+        add(word)
+
+        if lowercase.value:
+            add(word.lower())
+
+        if uppercase.value:
+            add(word.upper())
+
+        if capitalized.value:
+            add(word.capitalize())
+
+        if reverse_words.value:
+            add(word[::-1])
+
+        if leet.value:
+            add(make_leet(word))
+
+        if leet.value:
+            add(make_leet(word.lower()))
+
+    # ------------------------------------------------------------
+    # Dates / Years
+    # ------------------------------------------------------------
+
+    date_list = date_tokens()
+
+    if dates.value:
+
+        for base in profile:
+
+            for token in date_list:
+
+                add(base + token)
+                add(token + base)
+
+                if combinations.value:
+                    for sep in normalize_list(separator_patterns.value):
+                        add(base + sep + token)
+                        add(token + sep + base)
+
+    # ------------------------------------------------------------
+    # Number patterns
+    # ------------------------------------------------------------
+
+    nums = normalize_list(number_patterns.value)
+
+    if numbers.value:
+
+        for base in profile:
+
+            for number in nums:
+
+                add(base + number)
+                add(number + base)
+
+                if capitalized.value:
+                    add(base.capitalize() + number)
+
+                if uppercase.value:
+                    add(base.upper() + number)
+
+                if leet.value:
+                    add(make_leet(base) + number)
+
+    # ------------------------------------------------------------
+    # Symbol patterns
+    # ------------------------------------------------------------
+
+    syms = normalize_list(symbol_patterns.value)
+
+    if symbols.value:
+
+        for base in profile:
+
+            for symbol in syms:
+
+                add(base + symbol)
+                add(symbol + base)
+
+                for number in nums[:20]:
+
+                    add(base + symbol + number)
+                    add(base + number + symbol)
+
+    # ------------------------------------------------------------
+    # Two-word combinations
+    # ------------------------------------------------------------
+
+    if combinations.value:
+
+        separators = normalize_list(separator_patterns.value)
+
+        if not separators:
+            separators = [""]
+
+        for a, b in itertools.permutations(profile, 2):
+
+            add(a + b)
+            add(b + a)
+
+            for sep in separators:
+
+                add(a + sep + b)
+                add(b + sep + a)
+
+                if numbers.value:
+                    for number in nums[:10]:
+                        add(a + sep + b + number)
+                        add(number + a + sep + b)
+
+    # ------------------------------------------------------------
+    # Extra capitalization combinations
+    # ------------------------------------------------------------
+
+    snapshot = list(generated)
+
+    for word in snapshot[:min(len(snapshot), 5000)]:
+
+        if len(generated) >= limit:
+            break
+
+        if lowercase.value:
+            add(word.lower())
+
+        if uppercase.value:
+            add(word.upper())
+
+        if capitalized.value:
+            add(word.capitalize())
+
+        if reverse_words.value:
+            add(word[::-1])
+
+    # ------------------------------------------------------------
+    # Final processing
+    # ------------------------------------------------------------
+
+    result = list(generated)
+
+    if deduplicate.value:
+        result = list(dict.fromkeys(result))
+
+    result.sort(key=lambda x: (len(x), x.lower()))
+
+    result = result[:limit]
+
+    elapsed = time.time() - start_time
+
+    STATE["words"] = result
+    STATE["filtered"] = result.copy()
+    STATE["generation_time"] = elapsed
+    STATE["generated_at"] = datetime.now().isoformat()
+    STATE["profile"] = {
+        "words": profile,
+        "min_length": min_len,
+        "max_length": max_len,
+        "max_words": limit
+    }
+
+    return result
+
+
+# ================================================================
+# 10. UI REFRESH
+# ================================================================
+
+def refresh_kpis():
+    words = STATE["words"]
+
+    if words:
+        lengths = [len(x) for x in words]
+
+        avg_len = sum(lengths) / len(lengths)
+
+        shortest = min(lengths)
+        longest = max(lengths)
+
+    else:
+        avg_len = 0
+        shortest = 0
+        longest = 0
+
+    kpi_html.value = f"""
+    <div style="
+        display:flex;
+        gap:10px;
+        flex-wrap:wrap;
+        margin:10px 0;
+    ">
+
+        <div class="cupp-kpi">
+            <div class="cupp-kpi-number">{len(words):,}</div>
+            <div class="cupp-kpi-label">Total Words</div>
+        </div>
+
+        <div class="cupp-kpi">
+            <div class="cupp-kpi-number">{avg_len:.1f}</div>
+            <div class="cupp-kpi-label">Avg Length</div>
+        </div>
+
+        <div class="cupp-kpi">
+            <div class="cupp-kpi-number">{shortest}</div>
+            <div class="cupp-kpi-label">Shortest</div>
+        </div>
+
+        <div class="cupp-kpi">
+            <div class="cupp-kpi-number">{longest}</div>
+            <div class="cupp-kpi-label">Longest</div>
+        </div>
+
+        <div class="cupp-kpi">
+            <div class="cupp-kpi-number">
+                {STATE["generation_time"]:.3f}s
+            </div>
+            <div class="cupp-kpi-label">Generation</div>
+        </div>
+
+    </div>
+    """
+
+
+def render_words(words=None):
+    if words is None:
+        words = STATE["filtered"]
+
+    with word_output:
+        clear_output(wait=True)
+
+        if not words:
+            display(HTML("""
+            <div class="cupp-console">
+                No matching words.
+            </div>
+            """))
+            return
+
+        visible = words[:5000]
+
+        text = "\n".join(
+            f"{i+1:05d}  {word}"
+            for i, word in enumerate(visible)
+        )
+
+        display(HTML(
+            "<pre style='color:#b9ffe6;"
+            "background:#040a0f;"
+            "padding:12px;"
+            "border-radius:8px;'>"
+            + text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            + "</pre>"
+        ))
+
+
+def refresh_logs():
+    if "logs_output" not in globals():
+        return
+
+    with logs_output:
+        clear_output(wait=True)
+
+        text = "\n".join(STATE["logs"][-100:])
+
+        display(HTML(
+            "<pre style='color:#9fffd8;"
+            "background:#040a0f;"
+            "padding:10px;"
+            "border-radius:8px;'>"
+            + text
+            + "</pre>"
+        ))
+
+
+def refresh_analytics():
+    with analytics_output:
+        clear_output(wait=True)
+
+        words = STATE["words"]
+
+        if not words:
+            display(HTML(
+                "<div class='cupp-console'>"
+                "No generated data yet."
+                "</div>"
+            ))
+            return
+
+        lengths = Counter(len(x) for x in words)
+
+        rows = ""
+
+        for length, count in sorted(lengths.items()):
+            rows += f"""
+            <tr>
+                <td>{length}</td>
+                <td>{count:,}</td>
+            </tr>
+            """
+
+        display(HTML(f"""
+        <div class="cupp-console">
+        <b>WORD LENGTH DISTRIBUTION</b>
+        <br><br>
+
+        <table style="width:100%; color:#b9ffe6;">
+            <tr>
+                <th align="left">Length</th>
+                <th align="left">Count</th>
+            </tr>
+            {rows}
+        </table>
+        </div>
+        """))
+
+
+# ================================================================
+# 11. SEARCH
+# ================================================================
+
+search_box = widgets.Text(
+    placeholder="Search generated words...",
+    description="🔎 Search",
+    layout=widgets.Layout(width="100%")
+)
+
+
+def search_words(change=None):
+    query = search_box.value.strip().lower()
+
+    if not query:
+        STATE["filtered"] = STATE["words"].copy()
+    else:
+        STATE["filtered"] = [
+            word for word in STATE["words"]
+            if query in word.lower()
+        ]
+
+    render_words()
+
+
+search_box.observe(search_words, names="value")
+
+
+# ================================================================
+# 12. BUTTONS
+# ================================================================
+
+generate_button = widgets.Button(
+    description="⚡ GENERATE WORDLIST",
+    button_style="success",
+    icon="bolt",
+    layout=widgets.Layout(width="230px", height="42px")
+)
+
+clear_button = widgets.Button(
+    description="🗑 CLEAR",
+    button_style="warning",
+    icon="trash",
+    layout=widgets.Layout(width="130px", height="42px")
+)
+
+reset_button = widgets.Button(
+    description="↻ RESET",
+    icon="refresh",
+    layout=widgets.Layout(width="130px", height="42px")
+)
+
+export_txt_button = widgets.Button(
+    description="⬇ TXT",
+    icon="download"
+)
+
+export_csv_button = widgets.Button(
+    description="⬇ CSV",
+    icon="download"
+)
+
+export_json_button = widgets.Button(
+    description="⬇ JSON",
+    icon="download"
+)
+
+
+# ================================================================
+# 13. CALLBACKS
+# ================================================================
+# IMPORTANT:
+# ipywidgets passes the clicked Button object to callbacks.
+# Therefore callbacks accept "button=None".
+# ================================================================
+
+def on_generate_clicked(button=None):
+    try:
+
+        status_html.value = """
+        <div class="cupp-console">
+        ⚡ GENERATING — Please wait...
+        </div>
+        """
+
+        generate_button.disabled = True
+
+        result = generate_wordlist()
+
+        refresh_kpis()
+        render_words()
+        refresh_analytics()
+
+        status_html.value = f"""
+        <div class="cupp-console">
+        <span style="color:#00ff9d;">
+        ✅ GENERATION COMPLETE
+        </span><br>
+        Generated: <b>{len(result):,}</b> words<br>
+        Time: <b>{STATE["generation_time"]:.3f}s</b>
+        </div>
+        """
+
+        log(
+            f"Generated {len(result):,} words "
+            f"in {STATE['generation_time']:.3f}s",
+            "OK"
+        )
+
+    except Exception as exc:
+
+        status_html.value = f"""
+        <div class="cupp-console">
+        <span style="color:#ff5577;">
+        ❌ ERROR
+        </span><br>
+        {str(exc)}
+        </div>
+        """
+
+        log(str(exc), "ERROR")
+
+    finally:
+        generate_button.disabled = False
+
+
+def on_clear_clicked(button=None):
+
+    STATE["words"] = []
+    STATE["filtered"] = []
+
+    refresh_kpis()
+    render_words()
+    refresh_analytics()
+
+    status_html.value = """
+    <div class="cupp-console">
+    🧹 Wordlist cleared.
+    </div>
+    """
+
+    log("Wordlist cleared", "INFO")
+
+
+def on_reset_clicked(button=None):
+
+    first_name.value = ""
+    last_name.value = ""
+    nickname.value = ""
+    birthday.value = ""
+    partner.value = ""
+    pet.value = ""
+    company.value = ""
+    city.value = ""
+    keyword.value = ""
+    custom_words.value = ""
+
+    lowercase.value = True
+    uppercase.value = True
+    capitalized.value = True
+    reverse_words.value = True
+    leet.value = True
+    numbers.value = True
+    symbols.value = True
+    dates.value = True
+    combinations.value = True
+    deduplicate.value = True
+
+    min_length.value = 4
+    max_length.value = 32
+    max_words.value = 5000
+
+    year_from.value = 1990
+    year_to.value = 2026
+
+    preset.value = "Custom"
+
+    STATE["words"] = []
+    STATE["filtered"] = []
+    STATE["profile"] = {}
+
+    refresh_kpis()
+    render_words()
+    refresh_analytics()
+
+    status_html.value = """
+    <div class="cupp-console">
+    ↻ System reset complete.
+    </div>
+    """
+
+    log("Application reset", "INFO")
+
+
+# ================================================================
+# 14. EXPORT FUNCTIONS
+# ================================================================
+
+def export_txt(button=None):
+
+    with open(TXT_FILE, "w", encoding="utf-8") as f:
+        f.write("\n".join(STATE["words"]))
+
+    log(f"TXT exported: {TXT_FILE}", "EXPORT")
+
+    display(HTML(
+        f"<div class='cupp-console'>"
+        f"✅ TXT saved: {TXT_FILE}"
+        f"</div>"
+    ))
+
+
+def export_csv(button=None):
+
+    with open(
+        CSV_FILE,
+        "w",
+        newline="",
+        encoding="utf-8"
+    ) as f:
+
+        writer = csv.writer(f)
+
+        writer.writerow(["index", "word", "length"])
+
+        for index, word in enumerate(
+            STATE["words"],
+            start=1
+        ):
+            writer.writerow([
+                index,
+                word,
+                len(word)
+            ])
+
+    log(f"CSV exported: {CSV_FILE}", "EXPORT")
+
+    display(HTML(
+        f"<div class='cupp-console'>"
+        f"✅ CSV saved: {CSV_FILE}"
+        f"</div>"
+    ))
+
+
+def export_json(button=None):
+
+    session = {
+        "application": APP_NAME,
+        "version": VERSION,
+        "generated_at": STATE["generated_at"],
+        "generation_time": STATE["generation_time"],
+        "profile": STATE["profile"],
+        "total_words": len(STATE["words"]),
+        "words": STATE["words"],
+        "logs": STATE["logs"]
+    }
+
+    with open(
+        JSON_FILE,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
+        json.dump(
+            session,
+            f,
+            indent=2,
+            ensure_ascii=False
+        )
+
+    log(f"JSON exported: {JSON_FILE}", "EXPORT")
+
+    display(HTML(
+        f"<div class='cupp-console'>"
+        f"✅ JSON saved: {JSON_FILE}"
+        f"</div>"
+    ))
+
+
+# ================================================================
+# 15. PRESETS
+# ================================================================
+
+def apply_preset(change):
+
+    selected = change["new"]
+
+    if selected == "Balanced Lab":
+
+        min_length.value = 4
+        max_length.value = 24
+        max_words.value = 5000
+
+        lowercase.value = True
+        uppercase.value = True
+        capitalized.value = True
+        reverse_words.value = True
+        leet.value = True
+        numbers.value = True
+        symbols.value = True
+        dates.value = True
+        combinations.value = True
+        deduplicate.value = True
+
+    elif selected == "Compact Lab":
+
+        min_length.value = 5
+        max_length.value = 18
+        max_words.value = 1500
+
+        lowercase.value = True
+        uppercase.value = False
+        capitalized.value = True
+        reverse_words.value = False
+        leet.value = False
+        numbers.value = True
+        symbols.value = False
+        dates.value = True
+        combinations.value = True
+        deduplicate.value = True
+
+    elif selected == "Extended Lab":
+
+        min_length.value = 4
+        max_length.value = 32
+        max_words.value = 15000
+
+        lowercase.value = True
+        uppercase.value = True
+        capitalized.value = True
+        reverse_words.value = True
+        leet.value = True
+        numbers.value = True
+        symbols.value = True
+        dates.value = True
+        combinations.value = True
+        deduplicate.value = True
+
+    log(f"Preset selected: {selected}", "CONFIG")
+
+
+preset.observe(apply_preset, names="value")
+
+
+# ================================================================
+# 16. CONNECT BUTTONS
+# ================================================================
+
+generate_button.on_click(on_generate_clicked)
+clear_button.on_click(on_clear_clicked)
+reset_button.on_click(on_reset_clicked)
+
+export_txt_button.on_click(export_txt)
+export_csv_button.on_click(export_csv)
+export_json_button.on_click(export_json)
+
+
+# ================================================================
+# 17. SIDEBAR
+# ================================================================
+
+nav_dashboard = widgets.Button(
+    description="▣ Dashboard",
+    layout=widgets.Layout(width="180px")
+)
+
+nav_profiler = widgets.Button(
+    description="👤 Profiler",
+    layout=widgets.Layout(width="180px")
+)
+
+nav_generator = widgets.Button(
+    description="⚡ Generator",
+    layout=widgets.Layout(width="180px")
+)
+
+nav_analytics = widgets.Button(
+    description="📊 Analytics",
+    layout=widgets.Layout(width="180px")
+)
+
+nav_export = widgets.Button(
+    description="⬇ Export",
+    layout=widgets.Layout(width="180px")
+)
+
+nav_logs = widgets.Button(
+    description="▤ Logs",
+    layout=widgets.Layout(width="180px")
+)
+
+
+# ================================================================
+# 18. PANELS
+# ================================================================
+
+dashboard_panel = widgets.VBox([
+    widgets.HTML(
+        "<div class='cupp-section-title'>"
+        "SYSTEM DASHBOARD"
+        "</div>"
+    ),
+    status_html,
+    kpi_html,
+    widgets.HTML(
+        "<div class='cupp-small'>"
+        "Professional local wordlist generation dashboard."
+        "</div>"
+    )
+])
+
+profiler_panel = widgets.VBox([
+
+    widgets.HTML(
+        "<div class='cupp-section-title'>"
+        "👤 PROFILE BUILDER"
+        "</div>"
+    ),
+
+    widgets.HBox([
+        first_name,
+        last_name
+    ]),
+
+    widgets.HBox([
+        nickname,
+        birthday
+    ]),
+
+    widgets.HBox([
+        partner,
+        pet
+    ]),
+
+    widgets.HBox([
+        company,
+        city
+    ]),
+
+    keyword,
+    custom_words,
+
+    widgets.HTML(
+        "<div class='cupp-small'>"
+        "Use only information you are authorized to process."
+        "</div>"
+    )
+])
+
+
+generator_panel = widgets.VBox([
+
+    widgets.HTML(
+        "<div class='cupp-section-title'>"
+        "⚡ GENERATION ENGINE"
+        "</div>"
+    ),
+
+    preset,
+
+    widgets.HBox([
+        lowercase,
+        uppercase,
+        capitalized,
+        reverse_words,
+        leet
+    ]),
+
+    widgets.HBox([
+        numbers,
+        symbols,
+        dates,
+        combinations,
+        deduplicate
+    ]),
+
+    widgets.HTML(
+        "<div class='cupp-section-title'>"
+        "🧠 ADVANCED SETTINGS"
+        "</div>"
+    ),
+
+    widgets.HBox([
+        min_length,
+        max_length,
+        max_words
+    ]),
+
+    widgets.HBox([
+        year_from,
+        year_to
+    ]),
+
+    number_patterns,
+    symbol_patterns,
+    separator_patterns,
+    leet_map,
+
+    widgets.HBox([
+        generate_button,
+        clear_button,
+        reset_button
+    ])
+])
+
+
+live_panel = widgets.VBox([
+
+    widgets.HTML(
+        "<div class='cupp-section-title'>"
+        "▣ LIVE WORDLIST"
+        "</div>"
+    ),
+
+    search_box,
+    word_output
+])
+
+
+analytics_panel = widgets.VBox([
+
+    widgets.HTML(
+        "<div class='cupp-section-title'>"
+        "📊 ANALYTICS"
+        "</div>"
+    ),
+
+    analytics_output
+])
+
+
+export_panel = widgets.VBox([
+
+    widgets.HTML(
+        "<div class='cupp-section-title'>"
+        "⬇ EXPORT CENTER"
+        "</div>"
+    ),
+
+    widgets.HTML(
+        "<div class='cupp-small'>"
+        "Export the generated local dataset."
+        "</div>"
+    ),
+
+    widgets.HBox([
+        export_txt_button,
+        export_csv_button,
+        export_json_button
+    ]),
+
+    widgets.HTML(
+        "<br><div class='cupp-console'>"
+        f"TXT: {TXT_FILE}<br>"
+        f"CSV: {CSV_FILE}<br>"
+        f"JSON: {JSON_FILE}"
+        "</div>"
+    )
+])
+
+
+logs_panel = widgets.VBox([
+
+    widgets.HTML(
+        "<div class='cupp-section-title'>"
+        "▤ SYSTEM LOGS"
+        "</div>"
+    ),
+
+    logs_output
+])
+
+
+# ================================================================
+# 19. MAIN WORKSPACE
+# ================================================================
+
+sidebar = widgets.VBox(
+    [
+        widgets.HTML(
+            "<div style='color:#00e5ff;"
+            "font-weight:800;"
+            "padding:8px 0;'>"
+            "NAVIGATION"
+            "</div>"
+        ),
+        nav_dashboard,
+        nav_profiler,
+        nav_generator,
+        nav_analytics,
+        nav_export,
+        nav_logs,
+    ],
+    layout=widgets.Layout(
+        width="200px",
+        padding="12px",
+        border="1px solid #1d3545"
+    )
+)
+
+main_output = widgets.Output()
+
+def show_panel(panel):
+
+    with main_output:
+        clear_output(wait=True)
+        display(panel)
+
+
+def nav_dashboard_clicked(button=None):
+    show_panel(
+        widgets.VBox([
+            dashboard_panel,
+            live_panel
+        ])
+    )
+
+
+def nav_profiler_clicked(button=None):
+    show_panel(profiler_panel)
+
+
+def nav_generator_clicked(button=None):
+    show_panel(generator_panel)
+
+
+def nav_analytics_clicked(button=None):
+    show_panel(analytics_panel)
+
+
+def nav_export_clicked(button=None):
+    show_panel(export_panel)
+
+
+def nav_logs_clicked(button=None):
+    show_panel(logs_panel)
+
+
+nav_dashboard.on_click(nav_dashboard_clicked)
+nav_profiler.on_click(nav_profiler_clicked)
+nav_generator.on_click(nav_generator_clicked)
+nav_analytics.on_click(nav_analytics_clicked)
+nav_export.on_click(nav_export_clicked)
+nav_logs.on_click(nav_logs_clicked)
+
+
+# ================================================================
+# 20. START APPLICATION
+# ================================================================
+
+refresh_kpis()
+render_words()
+refresh_analytics()
+
+log("CUPP Professional V11.3 initialized", "SYSTEM")
+log("Authorized Lab Mode enabled", "SECURITY")
+
+show_panel(
+    widgets.VBox([
+        dashboard_panel,
+        live_panel
+    ])
+)
+
+display(
+    widgets.HBox(
+        [
+            sidebar,
+            main_output
+        ],
+        layout=widgets.Layout(
+            width="100%",
+            align_items="flex-start"
+        )
+    )
+)
+
+display(HTML("""
+<div style="
+    margin-top:12px;
+    padding:12px;
+    color:#8da6b5;
+    font-family:Arial;
+    font-size:11px;
+    text-align:center;
+">
+    CUPP Professional V11.3 • 2026 • Authorized Lab Mode
+    • Local Generation Engine
+</div>
+"""))
+
+print("✅ CUPP PROFESSIONAL V11.3 READY")
+print("Use the sidebar to navigate Dashboard, Profiler, Generator, Analytics, Export and Logs.")
